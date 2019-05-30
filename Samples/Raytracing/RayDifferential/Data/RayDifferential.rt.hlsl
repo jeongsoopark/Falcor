@@ -41,6 +41,8 @@ struct PrimaryRayData
     float4 color;
     uint depth;
     float hitT;
+    float dodx, dody;
+    float dddx, dddy;
 };
 
 struct ShadowRayData

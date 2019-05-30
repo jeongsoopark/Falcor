@@ -34,32 +34,53 @@ using namespace Falcor;
 class RayDifferential : public Renderer
 {
 public:
-    void onLoad(SampleCallbacks* pSample, RenderContext* pRenderContext) override;
-    void onFrameRender(SampleCallbacks* pSample, RenderContext* pRenderContext, const Fbo::SharedPtr& pTargetFbo) override;
-    void onResizeSwapChain(SampleCallbacks* pSample, uint32_t width, uint32_t height) override;
-    bool onKeyEvent(SampleCallbacks* pSample, const KeyboardEvent& keyEvent) override;
-    bool onMouseEvent(SampleCallbacks* pSample, const MouseEvent& mouseEvent) override;
-    void onGuiRender(SampleCallbacks* pSample, Gui* pGui) override;
+        /** Called once right after context creation.
+        */
+		void onLoad(SampleCallbacks* pCallbacks, RenderContext* pRenderContext) override;
+
+        /** Called on each frame render.
+        */
+        void onFrameRender(SampleCallbacks* pCallbacks, RenderContext* pRenderContext, const std::shared_ptr<Fbo>& pTargetFbo) override;
+
+        /** Called every time the swap-chain is resized. You can query the default FBO for the new size and sample count of the window.
+        */
+        void onResizeSwapChain(SampleCallbacks* pCallbacks, uint32_t width, uint32_t height) override;
+
+        /** Called every time a key event occurred.
+        \param[in] keyEvent The keyboard event
+        \return true if the event was consumed by the callback, otherwise false
+        */
+        bool onKeyEvent(SampleCallbacks* pCallbacks, const KeyboardEvent& keyEvent) override;
+
+        /** Called every time a mouse event occurred.
+        \param[in] mouseEvent The mouse event
+        \return true if the event was consumed by the callback, otherwise false
+        */
+        bool onMouseEvent(SampleCallbacks* pCallbacks, const MouseEvent& mouseEvent)  override;
+
+        /** Called after onFrameRender().
+        It is highly recommended to use onGuiRender() exclusively for GUI handling. onGuiRender() will not be called when the GUI is hidden, which should help reduce CPU overhead.
+        You could also ignore this and render the GUI directly in your onFrameRender() function, but that is discouraged.
+        */
+        void onGuiRender(SampleCallbacks* pCallbacks, Gui* pGui) override;
+
+
 
 private:
     RtScene::SharedPtr mpScene;
-    SceneRenderer::SharedPtr mpSceneRenderer;
-
-    RtProgram::SharedPtr mpRaytraceProgram = nullptr;
-    GraphicsProgram::SharedPtr mpRasterProgram = nullptr;
-    GraphicsVars::SharedPtr mpProgramVars = nullptr;
-    GraphicsState::SharedPtr mpGraphicsState = nullptr;
     Camera::SharedPtr mpCamera;
     FirstPersonCameraController mCamController;
 
-    bool mRayTrace = true;
+    //Ray tracing based renderer stuff
+    RtProgram::SharedPtr mpRaytraceProgram = nullptr;
     RtProgramVars::SharedPtr mpRtVars;
     RtState::SharedPtr mpRtState;
     RtSceneRenderer::SharedPtr mpRtRenderer;
     Texture::SharedPtr mpRtOut;
 
-    void setPerFrameVars(const Fbo* pTargetFbo);
+	//private function used internally
+
     void renderRT(RenderContext* pContext, const Fbo* pTargetFbo);
-    void renderRaster(RenderContext* pContext);
-    void loadScene(const std::string& filename, const Fbo* pTargetFbo);
+	void loadScene(const std::string& filename, const Fbo* pTargetFbo);
+    void setPerFrameVars(const Fbo* pTargetFbo);
 };

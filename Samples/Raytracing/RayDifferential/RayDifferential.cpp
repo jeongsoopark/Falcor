@@ -29,109 +29,56 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 ***************************************************************************/
 #include "RayDifferential.h"
+using namespace Falcor;
 
 static const glm::vec4 kClearColor(0.38f, 0.52f, 0.10f, 1);
 static const std::string kDefaultScene = "Arcade/Arcade.fscene";
-
-std::string to_string(const vec3& v)
-{
-    std::string s;
-    s += "(" + std::to_string(v.x) + ", " + std::to_string(v.y) + ", " + std::to_string(v.z) + ")";
-    return s;
-}
-
-void RayDifferential::onGuiRender(SampleCallbacks* pSample, Gui* pGui)
-{
-    pGui->addCheckBox("Ray Trace", mRayTrace);
-    if (pGui->addButton("Load Scene"))
-    {
-        std::string filename;
-        if (openFileDialog(Scene::kFileExtensionFilters, filename))
-        {
-            loadScene(filename, pSample->getCurrentFbo().get());
-        }
-    }
-
-    for (uint32_t i = 0; i < mpScene->getLightCount(); i++)
-    {
-        std::string group = "Point Light" + std::to_string(i);
-        mpScene->getLight(i)->renderUI(pGui, group.c_str());
-    }
-}
 
 void RayDifferential::loadScene(const std::string& filename, const Fbo* pTargetFbo)
 {
     mpScene = RtScene::loadFromFile(filename, RtBuildFlags::None, Model::LoadFlags::RemoveInstancing);
     Model::SharedPtr pModel = mpScene->getModel(0);
-    float radius = pModel->getRadius();
-
+    float ModelRadius = pModel->getRadius();
     mpCamera = mpScene->getActiveCamera();
+	//if no camera in the scene
     assert(mpCamera);
-
     mCamController.attachCamera(mpCamera);
 
+	//
     Sampler::Desc samplerDesc;
     samplerDesc.setFilterMode(Sampler::Filter::Linear, Sampler::Filter::Linear, Sampler::Filter::Linear);
     Sampler::SharedPtr pSampler = Sampler::create(samplerDesc);
     pModel->bindSamplerToMaterials(pSampler);
 
-    // Update the controllers
-    mCamController.setCameraSpeed(radius * 0.25f);
-    float nearZ = std::max(0.1f, pModel->getRadius() / 750.0f);
-    float farZ = radius * 10;
+	//Update camera controllers
+    mCamController.setCameraSpeed(ModelRadius*0.25f);
+    float nearZ = std::max(0.1f, pModel->getRadius() / 750.f);
+    float farZ = ModelRadius * 10.f;
     mpCamera->setDepthRange(nearZ, farZ);
     mpCamera->setAspectRatio((float)pTargetFbo->getWidth() / (float)pTargetFbo->getHeight());
-    mpSceneRenderer = SceneRenderer::create(mpScene);
     mpRtVars = RtProgramVars::create(mpRaytraceProgram, mpScene);
     mpRtRenderer = RtSceneRenderer::create(mpScene);
 }
 
-void RayDifferential::onLoad(SampleCallbacks* pSample, RenderContext* pRenderContext)
+void RayDifferential::onLoad(SampleCallbacks* pCallbacks, RenderContext* pRenderContext)
 {
-    if (gpDevice->isFeatureSupported(Device::SupportedFeatures::Raytracing) == false)
-    {
-        logErrorAndExit("Device does not support raytracing!", true);
-    }
+    //TODO: checking hardware that is capable of ray-tracing 
 
-    RtProgram::Desc rtProgDesc;
-    rtProgDesc.addShaderLibrary("RayDifferential.rt.hlsl").setRayGen("rayGen");
-    rtProgDesc.addHitGroup(0, "primaryClosestHit", "").addMiss(0, "primaryMiss");
-    rtProgDesc.addHitGroup(1, "", "shadowAnyHit").addMiss(1, "shadowMiss");
+    //Loading shaders
+    RtProgram::Desc rtProgramDesc;
+    rtProgramDesc.addShaderLibrary("RayDifferential.rt.hlsl");
+    rtProgramDesc.setRayGen("rayGen");
+    rtProgramDesc.addHitGroup(0, "primaryClosestHit", "");
+    rtProgramDesc.addHitGroup(1, "", "shadowAnyHit");
+    rtProgramDesc.addMiss(0, "primaryMiss");
+    rtProgramDesc.addMiss(1, "shadowMiss");
+    mpRaytraceProgram = RtProgram::create(rtProgramDesc);
 
-    mpRaytraceProgram = RtProgram::create(rtProgDesc);
-
-    mpRasterProgram = GraphicsProgram::createFromFile("RayDifferential.ps.hlsl", "", "main");
-
-    loadScene(kDefaultScene, pSample->getCurrentFbo().get());
-
-    mpProgramVars = GraphicsVars::create(mpRasterProgram->getReflector());
-    mpGraphicsState = GraphicsState::create();
-    mpGraphicsState->setProgram(mpRasterProgram);
-
+    loadScene(kDefaultScene, pCallbacks->getCurrentFbo().get());
+    //Init RtState 
     mpRtState = RtState::create();
     mpRtState->setProgram(mpRaytraceProgram);
-    mpRtState->setMaxTraceRecursionDepth(3); // 1 for calling TraceRay from RayGen, 1 for calling it from the primary-ray ClosestHitShader for reflections, 1 for reflection ray tracing a shadow ray
-}
-
-void RayDifferential::renderRaster(RenderContext* pContext)
-{
-    mpGraphicsState->setRasterizerState(nullptr);
-    mpGraphicsState->setDepthStencilState(nullptr);
-    mpGraphicsState->setProgram(mpRasterProgram);
-    pContext->setGraphicsState(mpGraphicsState);
-    pContext->setGraphicsVars(mpProgramVars);
-    mpSceneRenderer->renderScene(pContext, mpCamera.get());
-}
-
-void RayDifferential::setPerFrameVars(const Fbo* pTargetFbo)
-{
-    PROFILE("setPerFrameVars");
-    GraphicsVars* pVars = mpRtVars->getGlobalVars().get();
-    ConstantBuffer::SharedPtr pCB = pVars->getConstantBuffer("PerFrameCB");
-    pCB["invView"] = glm::inverse(mpCamera->getViewMatrix());
-    pCB["viewportDims"] = vec2(pTargetFbo->getWidth(), pTargetFbo->getHeight());
-    float fovY = focalLengthToFovY(mpCamera->getFocalLength(), Camera::kDefaultFrameHeight);
-    pCB["tanHalfFovY"] = tanf(fovY * 0.5f);
+    mpRtState->setMaxTraceRecursionDepth(3);
 }
 
 void RayDifferential::renderRT(RenderContext* pContext, const Fbo* pTargetFbo)
@@ -146,38 +93,53 @@ void RayDifferential::renderRT(RenderContext* pContext, const Fbo* pTargetFbo)
     pContext->blit(mpRtOut->getSRV(), pTargetFbo->getRenderTargetView(0));
 }
 
-void RayDifferential::onFrameRender(SampleCallbacks* pSample, RenderContext* pRenderContext, const Fbo::SharedPtr& pTargetFbo)
+
+void RayDifferential::setPerFrameVars(const Fbo* pTargetFbo)
+{
+    PROFILE("setPerFrameVars");
+    GraphicsVars* pVars = mpRtVars->getGlobalVars().get();
+    ConstantBuffer::SharedPtr pCB = pVars->getConstantBuffer("PerFrameCB");
+    pCB["invView"] = glm::inverse(mpCamera->getViewMatrix());
+    pCB["viewportDims"] = vec2(pTargetFbo->getWidth(), pTargetFbo->getHeight());
+    float fovY = focalLengthToFovY(mpCamera->getFocalLength(), Camera::kDefaultFrameHeight);
+    pCB["tanHalfFovY"] = tanf(fovY * 0.5f);
+}
+
+void RayDifferential::onGuiRender(SampleCallbacks* pCallbacks, Gui* pGui)
+{
+    if (pGui->addButton("Load Scene"))
+    {
+        std::string filename;
+        if (openFileDialog(Scene::kFileExtensionFilters, filename))
+        {
+            loadScene(filename, pCallbacks->getCurrentFbo().get());
+        }
+    }
+    for (uint32_t i = 0; i < mpScene->getLightCount(); i++)
+    {
+        std::string group = "Point Light" + std::to_string(i);
+        mpScene->getLight(i)->renderUI(pGui, group.c_str());
+    }
+}
+
+void RayDifferential::onFrameRender(SampleCallbacks* pCallbacks, RenderContext* pRenderContext, const std::shared_ptr<Fbo>& pTargetFbo)
 {
     pRenderContext->clearFbo(pTargetFbo.get(), kClearColor, 1.0f, 0, FboAttachmentType::All);
 
     if (mpScene)
     {
-        mpGraphicsState->setFbo(pTargetFbo);
         mCamController.update();
-
-        if (mRayTrace)
-        {
-            renderRT(pRenderContext, pTargetFbo.get());
-        }
-        else
-        {
-            renderRaster(pRenderContext);
-        }
+        renderRT(pRenderContext, pTargetFbo.get());
     }
 }
 
 bool RayDifferential::onKeyEvent(SampleCallbacks* pSample, const KeyboardEvent& keyEvent)
 {
-    if (mCamController.onKeyEvent(keyEvent))
-    {
-        return true;
-    }
-    if (keyEvent.key == KeyboardEvent::Key::Space && keyEvent.type == KeyboardEvent::Type::KeyPressed)
-    {
-        mRayTrace = !mRayTrace;
-        return true;
-    }
-    return false;
+	if (mCamController.onKeyEvent(keyEvent))
+	{
+		return true;
+	}
+	return false;
 }
 
 bool RayDifferential::onMouseEvent(SampleCallbacks* pSample, const MouseEvent& mouseEvent)
